@@ -2,13 +2,29 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../main.dart';
+import '../screens/buyer_dashboard_screen.dart';
+import '../screens/farmer_dashboard_screen.dart';
+import '../services/api_scope.dart';
+import '../services/api_service.dart';
+import '../services/session.dart';
 
 enum AuthTab { login, signup }
+
+/// Returns the dashboard screen corresponding to a user role: buyers land on
+/// the buyer dashboard, everyone else on the farmer dashboard.
+Widget _dashboardForRole(String role) {
+  return role == 'buyer'
+      ? const BuyerDashboardScreen()
+      : const FarmerDashboardScreen();
+}
 
 /// The centered card containing the hero illustration, the Login/Sign Up
 /// tabs and the two corresponding forms.
 class AuthCard extends StatefulWidget {
-  const AuthCard({super.key});
+  const AuthCard({super.key, required this.role});
+
+  /// Selected role ('farmer' or 'buyer'), used when signing up.
+  final String role;
 
   @override
   State<AuthCard> createState() => _AuthCardState();
@@ -59,10 +75,12 @@ class _AuthCardState extends State<AuthCard> {
                   child: _tab == AuthTab.login
                       ? LoginForm(
                           key: const ValueKey('login'),
+                          role: widget.role,
                           onSwitchToSignup: () => _switchTab(AuthTab.signup),
                         )
                       : SignupForm(
                           key: const ValueKey('signup'),
+                          role: widget.role,
                           onSwitchToLogin: () => _switchTab(AuthTab.login),
                         ),
                 ),
@@ -113,7 +131,7 @@ class _HeroIllustration extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  'DealCheck',
+                  'agritrust',
                   style: GoogleFonts.inter(
                     fontSize: 24,
                     fontWeight: FontWeight.w600,
@@ -404,17 +422,18 @@ class _PasswordFieldState extends State<_PasswordField> {
 
 /// Primary filled action button (56px tall, matching the design).
 class _PrimaryButton extends StatelessWidget {
-  const _PrimaryButton({required this.label, this.onPressed});
+  const _PrimaryButton({required this.label, this.onPressed, this.busy = false});
 
   final String label;
   final VoidCallback? onPressed;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       height: 56,
       child: FilledButton(
-        onPressed: onPressed,
+        onPressed: busy ? null : onPressed,
         style: FilledButton.styleFrom(
           backgroundColor: AppColors.primary,
           foregroundColor: AppColors.onPrimary,
@@ -428,7 +447,16 @@ class _PrimaryButton extends StatelessWidget {
             fontWeight: FontWeight.w500,
           ),
         ),
-        child: Text(label),
+        child: busy
+            ? const SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  color: AppColors.onPrimary,
+                ),
+              )
+            : Text(label),
       ),
     );
   }
@@ -436,7 +464,14 @@ class _PrimaryButton extends StatelessWidget {
 
 /// The Log In form.
 class LoginForm extends StatefulWidget {
-  const LoginForm({super.key, required this.onSwitchToSignup});
+  const LoginForm({
+    super.key,
+    required this.role,
+    required this.onSwitchToSignup,
+  });
+
+  /// Selected role ('farmer' or 'buyer') from the role selection screen.
+  final String role;
 
   final VoidCallback onSwitchToSignup;
 
@@ -447,6 +482,7 @@ class LoginForm extends StatefulWidget {
 class _LoginFormState extends State<LoginForm> {
   final _email = TextEditingController();
   final _password = TextEditingController();
+  bool _submitting = false;
 
   @override
   void dispose() {
@@ -455,8 +491,32 @@ class _LoginFormState extends State<LoginForm> {
     super.dispose();
   }
 
-  void _login() {
-    // Wire up to your auth / API layer here.
+  Future<void> _login() async {
+    setState(() => _submitting = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    try {
+      final user = await ApiScope.of(context).login(
+        _email.text.trim(),
+        _password.text,
+        role: widget.role,
+      );
+      if (!mounted) return;
+      AppSession.currentUser = user;
+      navigator.pushAndRemoveUntil(
+        MaterialPageRoute<void>(
+          builder: (_) => _dashboardForRole(user.role),
+        ),
+        (route) => false,
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 
   @override
@@ -504,6 +564,7 @@ class _LoginFormState extends State<LoginForm> {
         _PrimaryButton(
           label: 'Log In',
           onPressed: _login,
+          busy: _submitting,
         ),
         const SizedBox(height: 8),
         Center(
@@ -545,7 +606,14 @@ class _LoginFormState extends State<LoginForm> {
 
 /// The Sign Up form.
 class SignupForm extends StatefulWidget {
-  const SignupForm({super.key, required this.onSwitchToLogin});
+  const SignupForm({
+    super.key,
+    required this.role,
+    required this.onSwitchToLogin,
+  });
+
+  /// Selected role ('farmer' or 'buyer').
+  final String role;
 
   final VoidCallback onSwitchToLogin;
 
@@ -558,6 +626,7 @@ class _SignupFormState extends State<SignupForm> {
   final _contact = TextEditingController();
   final _password = TextEditingController();
   final _confirm = TextEditingController();
+  bool _submitting = false;
 
   @override
   void dispose() {
@@ -568,8 +637,41 @@ class _SignupFormState extends State<SignupForm> {
     super.dispose();
   }
 
-  void _submit() {
-    // Wire up to your auth / API layer here.
+  Future<void> _submit() async {
+    if (_password.text.isEmpty ||
+        _confirm.text.isEmpty ||
+        _confirm.text != _password.text) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Passwords do not match')),
+      );
+      return;
+    }
+    setState(() => _submitting = true);
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context);
+    try {
+      final user = await ApiScope.of(context).signup(
+        name: _name.text.trim(),
+        email: _contact.text.trim(),
+        password: _password.text,
+        role: widget.role,
+      );
+      if (!mounted) return;
+      AppSession.currentUser = user;
+      navigator.pushAndRemoveUntil(
+        MaterialPageRoute<void>(
+          builder: (_) => _dashboardForRole(user.role),
+        ),
+        (route) => false,
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 
   @override
@@ -614,6 +716,7 @@ class _SignupFormState extends State<SignupForm> {
         _PrimaryButton(
           label: 'Create Account',
           onPressed: _submit,
+          busy: _submitting,
         ),
       ],
     );

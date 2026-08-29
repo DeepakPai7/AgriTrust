@@ -11,32 +11,138 @@ const router = express.Router();
 
 router.get("/", (req, res) => {
 
-    const requests = db.prepare(`
-        SELECT
-            requests.id,
-            requests.quantity,
-            requests.offered_price,
-            requests.status,
-            requests.created_at,
+    const farmerId = req.query.farmer_id
+        ? Number(req.query.farmer_id)
+        : null;
+    const buyerId = req.query.buyer_id
+        ? Number(req.query.buyer_id)
+        : null;
 
-            users.name AS buyer_name,
+    const getRequests = (extraWhere) => {
+        if (farmerId && buyerId) {
+            return db.prepare(`
+                SELECT
+                    requests.id,
+                    requests.buyer_id,
+                    requests.quantity,
+                    requests.offered_price,
+                    requests.status,
+                    requests.created_at,
 
-            products.product_name,
-            products.price AS product_price,
-            products.unit,
-            products.location
+                    buyers.name AS buyer_name,
 
-        FROM requests
+                    products.product_name,
+                    products.price AS product_price,
+                    products.unit,
+                    products.location,
+                    products.farmer_id
 
-        JOIN users
-            ON requests.buyer_id = users.id
+                FROM requests
 
-        JOIN products
-            ON requests.product_id = products.id
+                JOIN buyers
+                    ON requests.buyer_id = buyers.id
 
-        ORDER BY requests.id DESC
-    `).all();
+                JOIN products
+                    ON requests.product_id = products.id
 
+                WHERE products.farmer_id = ? AND requests.buyer_id = ?
+                ${extraWhere}
+                ORDER BY requests.id DESC
+            `).all(farmerId, buyerId);
+        }
+        if (farmerId) {
+            return db.prepare(`
+                SELECT
+                    requests.id,
+                    requests.buyer_id,
+                    requests.quantity,
+                    requests.offered_price,
+                    requests.status,
+                    requests.created_at,
+
+                    buyers.name AS buyer_name,
+
+                    products.product_name,
+                    products.price AS product_price,
+                    products.unit,
+                    products.location,
+                    products.farmer_id
+
+                FROM requests
+
+                JOIN buyers
+                    ON requests.buyer_id = buyers.id
+
+                JOIN products
+                    ON requests.product_id = products.id
+
+                WHERE products.farmer_id = ?
+                ${extraWhere}
+                ORDER BY requests.id DESC
+            `).all(farmerId);
+        }
+        if (buyerId) {
+            return db.prepare(`
+                SELECT
+                    requests.id,
+                    requests.buyer_id,
+                    requests.quantity,
+                    requests.offered_price,
+                    requests.status,
+                    requests.created_at,
+
+                    buyers.name AS buyer_name,
+
+                    products.product_name,
+                    products.price AS product_price,
+                    products.unit,
+                    products.location,
+                    products.farmer_id
+
+                FROM requests
+
+                JOIN buyers
+                    ON requests.buyer_id = buyers.id
+
+                JOIN products
+                    ON requests.product_id = products.id
+
+                WHERE requests.buyer_id = ?
+                ${extraWhere}
+                ORDER BY requests.id DESC
+            `).all(buyerId);
+        }
+        return db.prepare(`
+            SELECT
+                requests.id,
+                requests.buyer_id,
+                requests.quantity,
+                requests.offered_price,
+                requests.status,
+                requests.created_at,
+
+                buyers.name AS buyer_name,
+
+                products.product_name,
+                products.price AS product_price,
+                products.unit,
+                products.location,
+                products.farmer_id
+
+            FROM requests
+
+            JOIN buyers
+                ON requests.buyer_id = buyers.id
+
+            JOIN products
+                ON requests.product_id = products.id
+
+            ${extraWhere}
+            ORDER BY requests.id DESC
+        `).all();
+    };
+
+    const requests = getRequests("");
 
     res.status(200).json({
         success: true,
@@ -76,8 +182,8 @@ router.post("/", (req, res) => {
 
     // Check buyer
     const buyer = db.prepare(`
-        SELECT id, name, role
-        FROM users
+        SELECT id, name
+        FROM buyers
         WHERE id = ?
     `).get(buyer_id);
 
@@ -86,15 +192,6 @@ router.post("/", (req, res) => {
         return res.status(404).json({
             success: false,
             message: "Buyer not found"
-        });
-    }
-
-
-    // Make sure user is a buyer
-    if (buyer.role !== "buyer") {
-        return res.status(403).json({
-            success: false,
-            message: "Only buyers can create requests"
         });
     }
 
@@ -146,30 +243,31 @@ router.post("/", (req, res) => {
 
     // Get newly created request
     const newRequest = db.prepare(`
-        SELECT
-            requests.id,
-            requests.quantity,
-            requests.offered_price,
-            requests.status,
-            requests.created_at,
+            SELECT
+                requests.id,
+                requests.quantity,
+                requests.offered_price,
+                requests.status,
+                requests.created_at,
 
-            users.name AS buyer_name,
+                buyers.name AS buyer_name,
 
-            products.product_name,
-            products.price AS product_price,
-            products.unit,
-            products.location
+                products.product_name,
+                products.price AS product_price,
+                products.unit,
+                products.location,
+                products.farmer_id
 
-        FROM requests
+            FROM requests
 
-        JOIN users
-            ON requests.buyer_id = users.id
+            JOIN buyers
+                ON requests.buyer_id = buyers.id
 
-        JOIN products
-            ON requests.product_id = products.id
+            JOIN products
+                ON requests.product_id = products.id
 
-        WHERE requests.id = ?
-    `).get(result.lastInsertRowid);
+            WHERE requests.id = ?
+        `).get(result.lastInsertRowid);
 
 
     res.status(201).json({
@@ -273,30 +371,31 @@ router.put("/:id", (req, res) => {
 
     // Return updated request
     const updatedRequest = db.prepare(`
-        SELECT
-            requests.id,
-            requests.quantity,
-            requests.offered_price,
-            requests.status,
-            requests.created_at,
+            SELECT
+                requests.id,
+                requests.quantity,
+                requests.offered_price,
+                requests.status,
+                requests.created_at,
 
-            users.name AS buyer_name,
+                buyers.name AS buyer_name,
 
-            products.product_name,
-            products.price AS product_price,
-            products.unit,
-            products.location
+                products.product_name,
+                products.price AS product_price,
+                products.unit,
+                products.location,
+                products.farmer_id
 
-        FROM requests
+            FROM requests
 
-        JOIN users
-            ON requests.buyer_id = users.id
+            JOIN buyers
+                ON requests.buyer_id = buyers.id
 
-        JOIN products
-            ON requests.product_id = products.id
+            JOIN products
+                ON requests.product_id = products.id
 
-        WHERE requests.id = ?
-    `).get(id);
+            WHERE requests.id = ?
+        `).get(id);
 
 
     res.status(200).json({

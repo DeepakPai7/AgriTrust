@@ -2,14 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../main.dart';
+import '../screens/buyer_dashboard_screen.dart';
+import '../screens/buyer_profile_screen.dart';
 import '../screens/deals_screen.dart';
 import '../screens/farmer_dashboard_screen.dart';
+import '../screens/farmer_profile_screen.dart';
 import '../screens/market_prices_screen.dart';
+import '../screens/marketplace_screen.dart';
+import '../services/session.dart';
 
 /// Shared top app bar (logo + language switcher) used across screens so the
 /// header navigation is identical everywhere.
 class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
-  const AppTopBar({super.key});
+  const AppTopBar({super.key, this.showBack = true});
+
+  /// Whether to show the automatic back button in the leading slot.
+  /// Top-level tab screens pass `false`; pushed sub-pages keep `true`.
+  final bool showBack;
 
   @override
   Size get preferredSize => const Size.fromHeight(64);
@@ -18,6 +27,7 @@ class AppTopBar extends StatelessWidget implements PreferredSizeWidget {
   Widget build(BuildContext context) {
     return AppBar(
       toolbarHeight: 64,
+      automaticallyImplyLeading: showBack,
       backgroundColor: AppColors.surface,
       elevation: 0,
       scrolledUnderElevation: 0,
@@ -71,7 +81,7 @@ class AppLogo extends StatelessWidget {
               const SizedBox(width: 8),
               Flexible(
                 child: Text(
-                  'DealCheck',
+                  'agritrust',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -150,6 +160,7 @@ class AppBottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDesktop = MediaQuery.of(context).size.width >= 768;
+    final isBuyer = AppSession.currentUser?.role == 'buyer';
 
     return Container(
       decoration: const BoxDecoration(
@@ -177,7 +188,7 @@ class AppBottomNav extends StatelessWidget {
             ),
             _NavItem(
               icon: Icons.storefront,
-              label: 'Marketplace',
+              label: isBuyer ? 'Marketplace' : 'Market Prices',
               active: activeIndex == 1,
               showLabel: isDesktop,
               onTap: () => _open(context, 1),
@@ -194,7 +205,7 @@ class AppBottomNav extends StatelessWidget {
               label: 'Profile',
               active: activeIndex == 3,
               showLabel: isDesktop,
-              onTap: () {},
+              onTap: () => _open(context, 3),
             ),
           ],
         ),
@@ -204,14 +215,22 @@ class AppBottomNav extends StatelessWidget {
 
   void _open(BuildContext context, int index) {
     if (index == activeIndex) return;
+    final isBuyer = AppSession.currentUser?.role == 'buyer';
     final screen = switch (index) {
-      0 => const FarmerDashboardScreen(),
-      1 => const MarketPricesScreen(),
+      0 => isBuyer
+          ? const BuyerDashboardScreen()
+          : const FarmerDashboardScreen(),
+       1 => isBuyer
+          ? const MarketplaceScreen()
+          : const MarketPricesScreen(),
       2 => const DealsScreen(),
+      3 => isBuyer
+          ? const BuyerProfileScreen()
+          : const FarmerProfileScreen(),
       _ => null,
     };
     if (screen == null) return;
-    Navigator.of(context).push(
+    Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(builder: (_) => screen),
     );
   }

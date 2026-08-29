@@ -11,6 +11,33 @@ const router = express.Router();
 
 router.get("/", (req, res) => {
 
+    const farmerId = req.query.farmer_id
+        ? Number(req.query.farmer_id)
+        : null;
+
+    const buyerId = req.query.buyer_id
+        ? Number(req.query.buyer_id)
+        : null;
+
+    // Filter deals to the requested user when supplied, so a farmer or buyer
+    // only sees their own deals.
+    const whereClause = [];
+    const params = [];
+
+    if (farmerId) {
+        whereClause.push("deals.farmer_id = ?");
+        params.push(farmerId);
+    }
+
+    if (buyerId) {
+        whereClause.push("deals.buyer_id = ?");
+        params.push(buyerId);
+    }
+
+    const whereSql = whereClause.length
+        ? `WHERE ${whereClause.join(" AND ")}`
+        : "";
+
     const deals = db.prepare(`
         SELECT
             deals.id,
@@ -30,17 +57,18 @@ router.get("/", (req, res) => {
 
         FROM deals
 
-        JOIN users AS buyer
+        JOIN buyers AS buyer
             ON deals.buyer_id = buyer.id
 
-        JOIN users AS farmer
+        JOIN farmers AS farmer
             ON deals.farmer_id = farmer.id
 
         JOIN products
             ON deals.product_id = products.id
 
+        ${whereSql}
         ORDER BY deals.id DESC
-    `).all();
+    `).all(...params);
 
 
     res.status(200).json({
@@ -213,10 +241,10 @@ router.post("/", (req, res) => {
 
         FROM deals
 
-        JOIN users AS buyer
+        JOIN buyers AS buyer
             ON deals.buyer_id = buyer.id
 
-        JOIN users AS farmer
+        JOIN farmers AS farmer
             ON deals.farmer_id = farmer.id
 
         JOIN products
@@ -271,10 +299,10 @@ router.get("/:id", (req, res) => {
 
         FROM deals
 
-        JOIN users AS buyer
+        JOIN buyers AS buyer
             ON deals.buyer_id = buyer.id
 
-        JOIN users AS farmer
+        JOIN farmers AS farmer
             ON deals.farmer_id = farmer.id
 
         JOIN products
@@ -426,10 +454,10 @@ router.put("/:id", (req, res) => {
 
         FROM deals
 
-        JOIN users AS buyer
+        JOIN buyers AS buyer
             ON deals.buyer_id = buyer.id
 
-        JOIN users AS farmer
+        JOIN farmers AS farmer
             ON deals.farmer_id = farmer.id
 
         JOIN products

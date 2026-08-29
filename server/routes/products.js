@@ -11,20 +11,49 @@ const router = express.Router();
 
 router.get("/", (req, res) => {
 
-    const products = db.prepare(`
-        SELECT 
-            products.id,
-            products.product_name,
-            products.quantity,
-            products.unit,
-            products.price,
-            products.location,
-            products.created_at,
-            users.name AS farmer_name
-        FROM products
-        JOIN users ON products.farmer_id = users.id
-        ORDER BY products.id DESC
-    `).all();
+    const farmerId = req.query.farmer_id
+        ? Number(req.query.farmer_id)
+        : null;
+
+    const whereClause = farmerId ? "WHERE products.farmer_id = ?" : "";
+
+    const products = farmerId
+        ? db.prepare(`
+            SELECT
+                products.id,
+                products.farmer_id,
+                products.product_name,
+                products.quantity,
+                products.unit,
+                products.price,
+                products.location,
+                products.notes,
+                products.photo,
+                products.created_at,
+                farmers.name AS farmer_name
+            FROM products
+            JOIN farmers ON products.farmer_id = farmers.id
+            ${whereClause}
+            ORDER BY products.id DESC
+        `).all(farmerId)
+        : db.prepare(`
+            SELECT
+                products.id,
+                products.farmer_id,
+                products.product_name,
+                products.quantity,
+                products.unit,
+                products.price,
+                products.location,
+                products.notes,
+                products.photo,
+                products.created_at,
+                farmers.name AS farmer_name
+            FROM products
+            JOIN farmers ON products.farmer_id = farmers.id
+            ${whereClause}
+            ORDER BY products.id DESC
+        `).all();
 
     res.status(200).json({
         success: true,
@@ -47,7 +76,10 @@ router.post("/", (req, res) => {
         quantity,
         unit,
         price,
-        location
+        location,
+        notes,
+        photo,
+        created_at
     } = req.body;
 
 
@@ -69,8 +101,8 @@ router.post("/", (req, res) => {
     // Check whether farmer exists
     const farmer = db
         .prepare(`
-            SELECT id, name, role
-            FROM users
+            SELECT id, name
+            FROM farmers
             WHERE id = ?
         `)
         .get(farmer_id);
@@ -80,15 +112,6 @@ router.post("/", (req, res) => {
         return res.status(404).json({
             success: false,
             message: "Farmer not found"
-        });
-    }
-
-
-    // Make sure the user is actually a farmer
-    if (farmer.role !== "farmer") {
-        return res.status(403).json({
-            success: false,
-            message: "Only farmers can add products"
         });
     }
 
@@ -103,9 +126,12 @@ router.post("/", (req, res) => {
                 quantity,
                 unit,
                 price,
-                location
+                location,
+                notes,
+                photo,
+                created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
             farmer_id,
@@ -113,7 +139,10 @@ router.post("/", (req, res) => {
             quantity,
             unit,
             price,
-            location || null
+            location || null,
+            notes || null,
+            photo || null,
+            created_at || null
         );
 
 
@@ -122,15 +151,18 @@ router.post("/", (req, res) => {
         .prepare(`
             SELECT
                 products.id,
+                products.farmer_id,
                 products.product_name,
                 products.quantity,
                 products.unit,
                 products.price,
                 products.location,
+                products.notes,
+                products.photo,
                 products.created_at,
-                users.name AS farmer_name
+                farmers.name AS farmer_name
             FROM products
-            JOIN users ON products.farmer_id = users.id
+            JOIN farmers ON products.farmer_id = farmers.id
             WHERE products.id = ?
         `)
         .get(result.lastInsertRowid);
@@ -166,15 +198,18 @@ router.get("/:id", (req, res) => {
         .prepare(`
             SELECT
                 products.id,
+                products.farmer_id,
                 products.product_name,
                 products.quantity,
                 products.unit,
                 products.price,
                 products.location,
+                products.notes,
+                products.photo,
                 products.created_at,
-                users.name AS farmer_name
+                farmers.name AS farmer_name
             FROM products
-            JOIN users ON products.farmer_id = users.id
+            JOIN farmers ON products.farmer_id = farmers.id
             WHERE products.id = ?
         `)
         .get(id);

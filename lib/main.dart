@@ -1,8 +1,9 @@
-import 'package:agritrust/screens/buyer_requests_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import 'screens/farmer_dashboard_screen.dart';
+import 'screens/role_selection_screen.dart';
+import 'services/api_scope.dart';
+import 'services/api_service.dart';
 
 void main() {
   runApp(const AgriTrustApp());
@@ -48,7 +49,11 @@ class AppColors {
 }
 
 class AgriTrustApp extends StatelessWidget {
-  const AgriTrustApp({super.key});
+  const AgriTrustApp({super.key, this.apiService});
+
+  /// Optional API service. When omitted a real [HttpApiService] is used; tests
+  /// supply a fake to avoid hitting the network.
+  final ApiService? apiService;
 
   @override
   Widget build(BuildContext context) {
@@ -78,11 +83,14 @@ class AgriTrustApp extends StatelessWidget {
       ),
     );
 
-    return MaterialApp(
-      title: 'DealCheck',
-      debugShowCheckedModeBanner: false,
-      theme: theme,
-      home: const BuyerRequestsScreen(),
+    return ApiScope(
+      service: apiService ?? HttpApiService(),
+      child: MaterialApp(
+        title: 'agritrust',
+        debugShowCheckedModeBanner: false,
+        theme: theme,
+        home: const RoleSelectionScreen(),
+      ),
     );
   }
 }

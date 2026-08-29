@@ -2,22 +2,74 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../main.dart';
+import '../models/models.dart';
+import '../services/api_scope.dart';
 import '../widgets/app_bars.dart';
 
 /// "Farmer Buyer Requests" screen. Lists incoming offers from verified buyers
 /// in a responsive bento grid with accept/reject actions and a status filter.
 class BuyerRequestsScreen extends StatefulWidget {
-  const BuyerRequestsScreen({super.key});
+  const BuyerRequestsScreen({super.key, this.farmerId});
 
   static const double maxContentWidth = 896;
+
+  /// When set, only requests for this farmer's products are shown.
+  final int? farmerId;
 
   @override
   State<BuyerRequestsScreen> createState() => _BuyerRequestsScreenState();
 }
 
 class _BuyerRequestsScreenState extends State<BuyerRequestsScreen> {
-  _RequestStatus? _filter = _RequestStatus.pending;
-  final List<_RequestData> _requests = _initialRequests();
+  _Status? _filter;
+  List<BuyerRequest>? _requests;
+  Object? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _filter = _Status.pending;
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final requests = await ApiScope.of(context).fetchRequests(
+        farmerId: widget.farmerId,
+      );
+      if (mounted) {
+        setState(() {
+          _requests = requests;
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e;
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _setStatus(BuyerRequest request, String status) async {
+    try {
+      final apiScope = ApiScope.of(context);
+      await apiScope.updateRequestStatus(request.id, status);
+      if (status == 'accepted') {
+        await apiScope.createDeal(requestId: request.id);
+      }
+      await _load();
+    } catch (_) {
+      // Keep the current list if the update fails.
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -50,15 +102,7 @@ class _BuyerRequestsScreenState extends State<BuyerRequestsScreen> {
                       onFilterChanged: (f) => setState(() => _filter = f),
                     ),
                     const SizedBox(height: 32),
-                    _RequestsGrid(
-                      requests: _filtered(),
-                      onStatusChanged: (id, status) => setState(() {
-                        final i = _requests.indexWhere((r) => r.id == id);
-                        if (i >= 0) {
-                          _requests[i] = _requests[i].copyWith(status: status);
-                        }
-                      }),
-                    ),
+                    _buildBody(),
                   ],
                 ),
               ),
@@ -69,17 +113,99 @@ class _BuyerRequestsScreenState extends State<BuyerRequestsScreen> {
     );
   }
 
-  List<_RequestData> _filtered() {
-    if (_filter == null) return _requests;
-    return _requests.where((r) => r.status == _filter).toList();
+  Widget _buildBody() {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 48),
+        child: Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+      );
+    }
+    if (_error != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 48),
+        child: Column(
+          children: [
+            const Icon(
+              Icons.cloud_off,
+              size: 40,
+              color: AppColors.onSurfaceVariant,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Could not load requests',
+              style: GoogleFonts.inter(
+                fontSize: 16,
+                color: AppColors.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextButton(
+              onPressed: _load,
+              child: Text(
+                'Retry',
+                style: GoogleFonts.inter(color: AppColors.primary),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final requests = _filtered() ?? const <BuyerRequest>[];
+    if (requests.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 48),
+        child: Center(
+          child: Text(
+            'No requests found.',
+            style: GoogleFonts.inter(
+              fontSize: 16,
+              color: AppColors.onSurfaceVariant,
+            ),
+          ),
+        ),
+      );
+    }
+    return _RequestsGrid(
+      requests: requests,
+      onStatusChanged: _setStatus,
+    );
+  }
+
+  List<BuyerRequest>? _filtered() {
+    final all = _requests;
+    if (all == null) return null;
+    if (_filter == null) return all;
+    return all.where((r) => _fromStatus(r.status) == _filter).toList();
   }
 }
+
+enum _Status { pending, accepted, rejected }
+
+_Status _fromStatus(String status) {
+  switch (status) {
+    case 'accepted':
+      return _Status.accepted;
+    case 'rejected':
+      return _Status.rejected;
+    default:
+      return _Status.pending;
+  }
+}
+
+String _toStatus(_Status status) => switch (status) {
+      _Status.pending => 'pending',
+      _Status.accepted => 'accepted',
+      _Status.rejected => 'rejected',
+    };
 
 class _Header extends StatelessWidget {
   const _Header({required this.filter, required this.onFilterChanged});
 
-  final _RequestStatus? filter;
-  final ValueChanged<_RequestStatus?> onFilterChanged;
+  final _Status? filter;
+  final ValueChanged<_Status?> onFilterChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -139,8 +265,8 @@ class _Header extends StatelessWidget {
 class _StatusFilter extends StatelessWidget {
   const _StatusFilter({required this.filter, required this.onChanged});
 
-  final _RequestStatus? filter;
-  final ValueChanged<_RequestStatus?> onChanged;
+  final _Status? filter;
+  final ValueChanged<_Status?> onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -155,7 +281,7 @@ class _StatusFilter extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           DropdownButtonHideUnderline(
-            child: DropdownButton<_RequestStatus?>(
+            child: DropdownButton<_Status?>(
               value: filter,
               isDense: true,
               borderRadius: BorderRadius.circular(8),
@@ -169,20 +295,20 @@ class _StatusFilter extends StatelessWidget {
                 color: AppColors.onSurface,
               ),
               items: const [
-                DropdownMenuItem<_RequestStatus?>(
+                DropdownMenuItem<_Status?>(
                   value: null,
                   child: Text('All Statuses'),
                 ),
-                DropdownMenuItem<_RequestStatus?>(
-                  value: _RequestStatus.pending,
+                DropdownMenuItem<_Status?>(
+                  value: _Status.pending,
                   child: Text('Pending'),
                 ),
-                DropdownMenuItem<_RequestStatus?>(
-                  value: _RequestStatus.accepted,
+                DropdownMenuItem<_Status?>(
+                  value: _Status.accepted,
                   child: Text('Accepted'),
                 ),
-                DropdownMenuItem<_RequestStatus?>(
-                  value: _RequestStatus.rejected,
+                DropdownMenuItem<_Status?>(
+                  value: _Status.rejected,
                   child: Text('Rejected'),
                 ),
               ],
@@ -201,8 +327,8 @@ class _RequestsGrid extends StatelessWidget {
     required this.onStatusChanged,
   });
 
-  final List<_RequestData> requests;
-  final void Function(String id, _RequestStatus status) onStatusChanged;
+  final List<BuyerRequest> requests;
+  final void Function(BuyerRequest request, String status) onStatusChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -221,10 +347,12 @@ class _RequestsGrid extends StatelessWidget {
               children: [
                 for (var j = 0; j < slice.length; j++) ...[
                   if (j > 0) const SizedBox(width: 16),
-                  Expanded(child: _RequestCard(
-                    request: slice[j],
-                    onStatusChanged: onStatusChanged,
-                  )),
+                  Expanded(
+                    child: _RequestCard(
+                      request: slice[j],
+                      onStatusChanged: onStatusChanged,
+                    ),
+                  ),
                 ],
               ],
             ),
@@ -239,85 +367,18 @@ class _RequestsGrid extends StatelessWidget {
   }
 }
 
-enum _RequestStatus { pending, accepted, rejected }
-
-class _RequestData {
-  const _RequestData({
-    required this.id,
-    required this.initials,
-    required this.buyer,
-    required this.date,
-    required this.product,
-    required this.quantity,
-    required this.price,
-    this.status = _RequestStatus.pending,
-  });
-
-  final String id;
-  final String initials;
-  final String buyer;
-  final String date;
-  final String product;
-  final String quantity;
-  final String price;
-  final _RequestStatus status;
-
-  _RequestData copyWith({_RequestStatus? status}) {
-    return _RequestData(
-      id: id,
-      initials: initials,
-      buyer: buyer,
-      date: date,
-      product: product,
-      quantity: quantity,
-      price: price,
-      status: status ?? this.status,
-    );
-  }
-}
-
-List<_RequestData> _initialRequests() => const [
-      _RequestData(
-        id: 'rc1',
-        initials: 'A',
-        buyer: 'AgriCorp India',
-        date: 'Oct 24, 2023',
-        product: 'Premium Wheat',
-        quantity: '50 Quintals',
-        price: '₹2,200 / Qtl',
-      ),
-      _RequestData(
-        id: 'rc2',
-        initials: 'G',
-        buyer: 'Green Valley Mills',
-        date: 'Oct 23, 2023',
-        product: 'Organic Rice',
-        quantity: '200 Quintals',
-        price: '₹3,150 / Qtl',
-      ),
-      _RequestData(
-        id: 'rc3',
-        initials: 'S',
-        buyer: 'Sunfresh Produce',
-        date: 'Oct 22, 2023',
-        product: 'Soybeans',
-        quantity: '120 Quintals',
-        price: '₹4,800 / Qtl',
-      ),
-    ];
-
 class _RequestCard extends StatelessWidget {
   const _RequestCard({
     required this.request,
     required this.onStatusChanged,
   });
 
-  final _RequestData request;
-  final void Function(String id, _RequestStatus status) onStatusChanged;
+  final BuyerRequest request;
+  final void Function(BuyerRequest request, String status) onStatusChanged;
 
   @override
   Widget build(BuildContext context) {
-    final status = request.status;
+    final status = _fromStatus(request.status);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -345,7 +406,8 @@ class _RequestCard extends StatelessWidget {
                 bottom: BorderSide(color: AppColors.surfaceContainer),
               ),
             ),
-            child: _RequestRow(label: 'Product', value: request.product),
+            child:
+                _RequestRow(label: 'Product', value: request.productName),
           ),
           Container(
             padding: const EdgeInsets.symmetric(vertical: 8),
@@ -354,19 +416,22 @@ class _RequestCard extends StatelessWidget {
                 bottom: BorderSide(color: AppColors.surfaceContainer),
               ),
             ),
-            child: _RequestRow(label: 'Quantity', value: request.quantity),
+            child: _RequestRow(
+              label: 'Quantity',
+              value: '${_num(request.quantity)} ${request.unit}',
+            ),
           ),
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
             child: _RequestRow(
               label: 'Offered Price',
-              value: request.price,
+              value: '₹${_num(request.offeredPrice)} / ${request.unit}',
               valueColor: AppColors.primary,
               valueBold: true,
             ),
           ),
           const SizedBox(height: 8),
-          if (status == _RequestStatus.pending)
+          if (status == _Status.pending)
             Row(
               children: [
                 Expanded(
@@ -375,7 +440,8 @@ class _RequestCard extends StatelessWidget {
                     icon: Icons.close,
                     backgroundColor: AppColors.errorContainer,
                     foregroundColor: AppColors.onErrorContainer,
-                    onTap: () => onStatusChanged(request.id, _RequestStatus.rejected),
+                    onTap: () =>
+                        onStatusChanged(request, _toStatus(_Status.rejected)),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -385,7 +451,8 @@ class _RequestCard extends StatelessWidget {
                     icon: Icons.check,
                     backgroundColor: AppColors.primary,
                     foregroundColor: AppColors.onPrimary,
-                    onTap: () => onStatusChanged(request.id, _RequestStatus.accepted),
+                    onTap: () =>
+                        onStatusChanged(request, _toStatus(_Status.accepted)),
                   ),
                 ),
               ],
@@ -419,7 +486,7 @@ class _RequestCard extends StatelessWidget {
 class _RequestHeader extends StatelessWidget {
   const _RequestHeader({required this.request});
 
-  final _RequestData request;
+  final BuyerRequest request;
 
   @override
   Widget build(BuildContext context) {
@@ -435,7 +502,7 @@ class _RequestHeader extends StatelessWidget {
           ),
           alignment: Alignment.center,
           child: Text(
-            request.initials,
+            _initials(request.buyerName),
             style: GoogleFonts.inter(
               fontSize: 24,
               height: 1.1,
@@ -450,7 +517,7 @@ class _RequestHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                request.buyer,
+                request.buyerName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.inter(
@@ -460,7 +527,7 @@ class _RequestHeader extends StatelessWidget {
                 ),
               ),
               Text(
-                request.date,
+                _formatDate(request.createdAt),
                 style: GoogleFonts.inter(
                   fontSize: 14,
                   height: 20 / 14,
@@ -471,9 +538,29 @@ class _RequestHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        _StatusPill(status: request.status),
+        _StatusPill(status: _fromStatus(request.status)),
       ],
     );
+  }
+}
+
+String _initials(String name) {
+  final words = name.trim().split(RegExp(r'\s+'));
+  if (words.isEmpty) return '?';
+  return words[0].substring(0, 1).toUpperCase();
+}
+
+String _formatDate(String? created) {
+  if (created == null || created.isEmpty) return '';
+  try {
+    final parts = DateTime.parse(created).toLocal();
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    return '${months[parts.month - 1]} ${parts.day}, ${parts.year}';
+  } catch (_) {
+    return created;
   }
 }
 
@@ -574,22 +661,22 @@ class _ActionButton extends StatelessWidget {
 class _StatusPill extends StatelessWidget {
   const _StatusPill({required this.status});
 
-  final _RequestStatus status;
+  final _Status status;
 
   @override
   Widget build(BuildContext context) {
     final (bg, fg, text) = switch (status) {
-      _RequestStatus.accepted => (
+      _Status.accepted => (
           AppColors.primaryFixed,
           AppColors.primaryContainer,
           'Accepted'
         ),
-      _RequestStatus.rejected => (
+      _Status.rejected => (
           AppColors.errorContainer,
           AppColors.onErrorContainer,
           'Rejected'
         ),
-      _RequestStatus.pending => (
+      _Status.pending => (
           AppColors.secondaryFixed,
           const Color(0xFF351000),
           'Pending'
@@ -597,7 +684,7 @@ class _StatusPill extends StatelessWidget {
     };
 
     return Align(
-      alignment: Alignment.center,
+      alignment: Alignment.centerRight,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
@@ -616,4 +703,11 @@ class _StatusPill extends StatelessWidget {
       ),
     );
   }
+}
+
+String _num(num value) {
+  if (value == value.roundToDouble()) {
+    return value.toStringAsFixed(0);
+  }
+  return value.toString();
 }

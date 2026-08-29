@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../main.dart';
+import 'auth_screen.dart';
 
 enum UserRole { farmer, buyer }
 
@@ -52,7 +53,16 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                   const SizedBox(height: 32),
                   _ContinueButton(
                     enabled: _selected != null,
-                    onPressed: _selected == null ? null : () {},
+                    onPressed: _selected == null
+                        ? null
+                        : () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) =>
+                                    AuthScreen(role: _selected!.name),
+                              ),
+                            );
+                          },
                   ),
                 ],
               ),
@@ -98,7 +108,7 @@ class _Header extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(
-          'DealCheck',
+          'agritrust',
           style: GoogleFonts.inter(
             fontSize: 24,
             height: 32 / 24,

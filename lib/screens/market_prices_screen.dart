@@ -2,66 +2,326 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../main.dart';
+import '../models/models.dart';
+import '../services/api_scope.dart';
 import '../widgets/app_bars.dart';
 
 /// Market Prices screen. Uses the shared top bar and bottom navigation so the
 /// chrome is identical everywhere; only the body content differs.
-class MarketPricesScreen extends StatelessWidget {
+class MarketPricesScreen extends StatefulWidget {
   const MarketPricesScreen({super.key});
 
   static const double maxContentWidth = 1280;
 
   @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    final isDesktop = width >= 768;
+  State<MarketPricesScreen> createState() => _MarketPricesScreenState();
+}
 
+class _MarketPricesScreenState extends State<MarketPricesScreen> {
+  late Future<List<MarketPrice>> _pricesFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _pricesFuture = ApiScope.of(context).fetchMarketPrices();
+  }
+
+  void _reload() {
+    setState(() {
+      _pricesFuture = ApiScope.of(context).fetchMarketPrices();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
-      appBar: const AppTopBar(),
+      appBar: const AppTopBar(showBack: false),
       bottomNavigationBar: const AppBottomNav(activeIndex: 1),
       backgroundColor: AppColors.background,
       body: SafeArea(
         top: false,
         bottom: false,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.only(top: 32, bottom: 24),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: maxContentWidth),
-              child: Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isDesktop ? 64 : 16,
-                ),
-                child: const _MarketBody(),
-              ),
-            ),
-          ),
+        child: _MarketBody(
+          pricesFuture: _pricesFuture,
+          onRetry: _reload,
         ),
       ),
     );
   }
 }
 
-class _MarketBody extends StatelessWidget {
-  const _MarketBody();
+class _MarketBody extends StatefulWidget {
+  const _MarketBody({required this.pricesFuture, required this.onRetry});
+
+  final Future<List<MarketPrice>> pricesFuture;
+  final VoidCallback onRetry;
+
+  @override
+  State<_MarketBody> createState() => _MarketBodyState();
+}
+
+/// How many price cards to render at most. Rendering thousands of live
+/// records at once is what caused the crash, so we cap the visible set.
+const int _maxCards = 50;
+
+class _MarketBodyState extends State<_MarketBody> {
+  final TextEditingController _searchController = TextEditingController();
+  String _selectedState = 'All States';
+  List<MarketPrice>? _all;
+  bool _loading = true;
+  bool _error = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MarketBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.pricesFuture, widget.pricesFuture)) {
+      _load();
+    }
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = false;
+    });
+    try {
+      final prices = await widget.pricesFuture;
+      if (!mounted) return;
+      setState(() {
+        _all = prices;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = true;
+        _loading = false;
+      });
+    }
+  }
+
+  List<String> get _states {
+    final all = _all ?? const <MarketPrice>[];
+    final states = <String>{};
+    for (final p in all) {
+      if (p.state?.isNotEmpty == true) states.add(p.state!);
+    }
+    final list = states.toList()..sort();
+    return list;
+  }
+
+  List<MarketPrice> get _visible {
+    final all = _all ?? const <MarketPrice>[];
+    final query = _searchController.text.trim().toLowerCase();
+    Iterable<MarketPrice> result = all;
+    if (query.isNotEmpty) {
+      result = result.where((p) => p.commodity.toLowerCase().contains(query));
+    }
+    if (_selectedState != 'All States') {
+      result = result.where((p) => p.state == _selectedState);
+    }
+    return result.take(_maxCards).toList();
+  }
+
+  void _clearFilters() {
+    _searchController.clear();
+    setState(() => _selectedState = 'All States');
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const _PageHeader(),
-        const SizedBox(height: 32),
-        const _InsightCard(),
-        const SizedBox(height: 32),
-        _PriceGrid(),
+    final width = MediaQuery.of(context).size.width;
+    final isDesktop = width >= 768;
+
+    return CustomScrollView(
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.only(top: 32),
+          sliver: SliverToBoxAdapter(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: MarketPricesScreen.maxContentWidth,
+                ),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isDesktop ? 64 : 16,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _PageHeader(
+                        searchController: _searchController,
+                        selectedState: _selectedState,
+                        states: _states,
+                        onStateChanged: (v) {
+                          setState(() => _selectedState = v ?? 'All States');
+                        },
+                        onFilterChanged: (_) => setState(() {}),
+                        onClear: _clearFilters,
+                      ),
+                      const SizedBox(height: 16),
+                      const _InsightCard(),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        ..._priceSlivers(width, isDesktop),
+        SliverToBoxAdapter(
+          child: SizedBox(height: isDesktop ? 48 : 24),
+        ),
       ],
     );
+  }
+
+  List<Widget> _priceSlivers(double width, bool isDesktop) {
+    if (_loading) {
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(
+            child:
+                CircularProgressIndicator(color: AppColors.primary),
+          ),
+        ),
+      ];
+    }
+    if (_error) {
+      return [
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.cloud_off,
+                size: 40,
+                color: AppColors.onSurfaceVariant,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Could not load market prices',
+                style: GoogleFonts.inter(
+                  fontSize: 16,
+                  color: AppColors.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextButton(
+                onPressed: () {
+                  widget.onRetry();
+                },
+                child: Text(
+                  'Retry',
+                  style: GoogleFonts.inter(color: AppColors.primary),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ];
+    }
+
+    final all = _all ?? const <MarketPrice>[];
+    if (all.isEmpty) {
+      return [
+        const SliverFillRemaining(
+          hasScrollBody: false,
+          child: Center(
+            child: Text(
+              'No price data available.',
+            ),
+          ),
+        ),
+      ];
+    }
+
+    final prices = _visible;
+    final horizontal = isDesktop ? 64.0 : 16.0;
+    final cols = width >= 1200 ? 3 : (width >= 700 ? 2 : 1);
+    final rows = (prices.length / cols).ceil();
+
+    return [
+      SliverPadding(
+        padding: EdgeInsets.only(
+          left: horizontal,
+          right: horizontal,
+          top: 24,
+        ),
+        sliver: SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, rowIndex) {
+              final start = rowIndex * cols;
+              final slice = prices.skip(start).take(cols).toList();
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (var i = 0; i < cols; i++) ...[
+                      if (i > 0) const SizedBox(width: 16),
+                      Expanded(
+                        child: i < slice.length
+                            ? _PriceCard(
+                                name: slice[i].commodity,
+                                location: slice[i].state?.isNotEmpty == true
+                                    ? slice[i].state!
+                                    : 'India',
+                                change: 0.0,
+                                price: '₹${_num(slice[i].modalPrice)}',
+                                time: slice[i].arrivalDate?.isNotEmpty == true
+                                    ? slice[i].arrivalDate!
+                                    : 'Today',
+                                source: 'Verified',
+                                unit: 'Quintal',
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+            childCount: rows,
+          ),
+        ),
+      ),
+    ];
   }
 }
 
 class _PageHeader extends StatelessWidget {
-  const _PageHeader();
+  const _PageHeader({
+    required this.searchController,
+    required this.selectedState,
+    required this.states,
+    required this.onStateChanged,
+    required this.onFilterChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController searchController;
+  final String selectedState;
+  final List<String> states;
+  final ValueChanged<String?> onStateChanged;
+  final ValueChanged<String> onFilterChanged;
+  final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
@@ -108,8 +368,22 @@ class _PageHeader extends StatelessWidget {
               ],
             ),
             child: isDesktop
-                ? const _SearchRow()
-                : const _SearchColumn(),
+                ? _SearchRow(
+                    searchController: searchController,
+                    selectedState: selectedState,
+                    states: states,
+                    onStateChanged: onStateChanged,
+                    onFilterChanged: onFilterChanged,
+                    onClear: onClear,
+                  )
+                : _SearchColumn(
+                    searchController: searchController,
+                    selectedState: selectedState,
+                    states: states,
+                    onStateChanged: onStateChanged,
+                    onFilterChanged: onFilterChanged,
+                    onClear: onClear,
+                  ),
           ),
         ),
       ],
@@ -118,46 +392,97 @@ class _PageHeader extends StatelessWidget {
 }
 
 class _SearchRow extends StatelessWidget {
-  const _SearchRow();
+  const _SearchRow({
+    required this.searchController,
+    required this.selectedState,
+    required this.states,
+    required this.onStateChanged,
+    required this.onFilterChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController searchController;
+  final String selectedState;
+  final List<String> states;
+  final ValueChanged<String?> onStateChanged;
+  final ValueChanged<String> onFilterChanged;
+  final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        const Expanded(child: _SearchField()),
+        Expanded(
+          child: _SearchField(
+            controller: searchController,
+            onChanged: onFilterChanged,
+          ),
+        ),
         const SizedBox(width: 16),
-        const Expanded(child: _LocationDropdown()),
+        Expanded(
+          child: _LocationDropdown(
+            selectedState: selectedState,
+            states: states,
+            onChanged: onStateChanged,
+          ),
+        ),
         const SizedBox(width: 16),
-        const _FilterButton(),
+        _FilterButton(onTap: onClear),
       ],
     );
   }
 }
 
 class _SearchColumn extends StatelessWidget {
-  const _SearchColumn();
+  const _SearchColumn({
+    required this.searchController,
+    required this.selectedState,
+    required this.states,
+    required this.onStateChanged,
+    required this.onFilterChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController searchController;
+  final String selectedState;
+  final List<String> states;
+  final ValueChanged<String?> onStateChanged;
+  final ValueChanged<String> onFilterChanged;
+  final VoidCallback onClear;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const _SearchField(),
+        _SearchField(
+          controller: searchController,
+          onChanged: onFilterChanged,
+        ),
         const SizedBox(height: 16),
-        const _LocationDropdown(),
+        _LocationDropdown(
+          selectedState: selectedState,
+          states: states,
+          onChanged: onStateChanged,
+        ),
         const SizedBox(height: 16),
-        const _FilterButton(),
+        _FilterButton(onTap: onClear),
       ],
     );
   }
 }
 
 class _SearchField extends StatelessWidget {
-  const _SearchField();
+  const _SearchField({required this.controller, required this.onChanged});
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
 
   @override
   Widget build(BuildContext context) {
     return TextField(
+      controller: controller,
+      onChanged: onChanged,
       style: GoogleFonts.inter(
         fontSize: 16,
         color: AppColors.onSurface,
@@ -200,13 +525,21 @@ class _SearchField extends StatelessWidget {
 }
 
 class _LocationDropdown extends StatelessWidget {
-  const _LocationDropdown();
+  const _LocationDropdown({
+    required this.selectedState,
+    required this.states,
+    required this.onChanged,
+  });
+
+  final String selectedState;
+  final List<String> states;
+  final ValueChanged<String?> onChanged;
 
   @override
   Widget build(BuildContext context) {
     return DropdownButtonFormField<String>(
       isExpanded: true,
-      initialValue: 'All Locations',
+      initialValue: selectedState,
       icon: const Icon(
         Icons.expand_more,
         color: AppColors.onSurfaceVariant,
@@ -244,31 +577,26 @@ class _LocationDropdown extends StatelessWidget {
           borderSide: const BorderSide(color: AppColors.primary, width: 2),
         ),
       ),
-      items: const [
-        DropdownMenuItem(
-          value: 'All Locations',
-          child: Text('All Locations', overflow: TextOverflow.ellipsis),
+      items: [
+        const DropdownMenuItem(
+          value: 'All States',
+          child: Text('All States', overflow: TextOverflow.ellipsis),
         ),
-        DropdownMenuItem(
-          value: 'Bangalore APMC',
-          child: Text('Bangalore APMC', overflow: TextOverflow.ellipsis),
-        ),
-        DropdownMenuItem(
-          value: 'Mysore Mandi',
-          child: Text('Mysore Mandi', overflow: TextOverflow.ellipsis),
-        ),
-        DropdownMenuItem(
-          value: 'Hubli Market',
-          child: Text('Hubli Market', overflow: TextOverflow.ellipsis),
-        ),
+        for (final s in states)
+          DropdownMenuItem(
+            value: s,
+            child: Text(s, overflow: TextOverflow.ellipsis),
+          ),
       ],
-      onChanged: (_) {},
+      onChanged: onChanged,
     );
   }
 }
 
 class _FilterButton extends StatelessWidget {
-  const _FilterButton();
+  const _FilterButton({required this.onTap});
+
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -283,7 +611,7 @@ class _FilterButton extends StatelessWidget {
         elevation: 1,
         shadowColor: const Color(0x0D059669),
         child: InkWell(
-          onTap: () {},
+          onTap: onTap,
           borderRadius: BorderRadius.circular(8),
           child: Padding(
             padding: EdgeInsets.symmetric(
@@ -294,12 +622,12 @@ class _FilterButton extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Icon(
-                  Icons.filter_list,
+                  Icons.filter_alt_off,
                   color: AppColors.onPrimary,
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  'Filter',
+                  isDesktop ? 'Clear Filters' : 'Clear',
                   style: GoogleFonts.inter(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
@@ -527,61 +855,6 @@ class _InsightButton extends StatelessWidget {
   }
 }
 
-class _PriceGrid extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    final isDesktop = width >= 1024;
-
-    final cards = const [
-      _PriceCard(
-        name: 'Tomato (Hybrid)',
-        location: 'Bangalore APMC',
-        change: 2.5,
-        price: '₹2,900',
-        time: 'Today, 10:30 AM',
-        source: 'APMC Board',
-      ),
-      _PriceCard(
-        name: 'Onion (Red)',
-        location: 'Hubli Market',
-        change: -1.2,
-        price: '₹1,850',
-        time: 'Today, 09:15 AM',
-        source: 'Agmarknet',
-      ),
-      _PriceCard(
-        name: 'Wheat (Sona)',
-        location: 'Mysore Mandi',
-        change: 0.0,
-        price: '₹2,400',
-        time: 'Yesterday, 4:00 PM',
-        source: 'Direct Buyer',
-      ),
-    ];
-
-    if (isDesktop) {
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (var i = 0; i < cards.length; i++) ...[
-            if (i > 0) const SizedBox(width: 16),
-            Expanded(child: cards[i]),
-          ],
-        ],
-      );
-    }
-    return Column(
-      children: [
-        for (var i = 0; i < cards.length; i++) ...[
-          if (i > 0) const SizedBox(height: 16),
-          cards[i],
-        ],
-      ],
-    );
-  }
-}
-
 class _PriceCard extends StatelessWidget {
   const _PriceCard({
     required this.name,
@@ -590,6 +863,7 @@ class _PriceCard extends StatelessWidget {
     required this.price,
     required this.time,
     required this.source,
+    required this.unit,
   });
 
   final String name;
@@ -598,6 +872,7 @@ class _PriceCard extends StatelessWidget {
   final String price;
   final String time;
   final String source;
+  final String unit;
 
   @override
   Widget build(BuildContext context) {
@@ -672,7 +947,8 @@ class _PriceCard extends StatelessWidget {
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: trendBg,
                   borderRadius: BorderRadius.circular(6),
@@ -707,7 +983,7 @@ class _PriceCard extends StatelessWidget {
             ),
           ),
           Text(
-            'per Quintal',
+            'per ${unit.isEmpty ? 'unit' : unit}',
             style: GoogleFonts.inter(
               fontSize: 14,
               color: AppColors.onSurfaceVariant,
@@ -778,3 +1054,12 @@ class _PriceCard extends StatelessWidget {
   }
 }
 
+String _num(num value) {
+  if (value == value.roundToDouble()) {
+    return value.toStringAsFixed(0).replaceAllMapped(
+          RegExp(r'\B(?=(\d{3})+(?!\d))'),
+          (_) => ',',
+        );
+  }
+  return value.toString();
+}

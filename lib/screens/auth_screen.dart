@@ -44,7 +44,10 @@ class _LanguageFab extends StatelessWidget {
 /// Responsive: the card is centered and capped at [maxCardWidth] on larger
 /// screens, while remaining full-width on mobile with cozy padding.
 class AuthScreen extends StatelessWidget {
-  const AuthScreen({super.key});
+  const AuthScreen({super.key, required this.role});
+
+  /// Selected role ('farmer' or 'buyer'), used when signing up.
+  final String role;
 
   static const double maxCardWidth = 480;
 
@@ -62,7 +65,7 @@ class AuthScreen extends StatelessWidget {
               constraints: const BoxConstraints(
                 maxWidth: maxCardWidth,
               ),
-              child: const AuthCard(),
+              child: AuthCard(role: role),
             ),
           ),
         ),

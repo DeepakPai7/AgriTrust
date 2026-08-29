@@ -11,11 +11,13 @@ const marketPriceRoutes = require("./routes/marketPrices");
 const settlementRoutes = require("./routes/settlements");
 const productRoutes = require("./routes/products");
 const requestRoutes = require("./routes/requests");
+const profileRoutes = require("./routes/profiles");
 app.use(cors());
 app.use(express.json());
 
 // Authentication routes
 app.use("/api/auth", authRoutes);
+app.use("/api", profileRoutes);
 app.use("/api/locations", locationRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/requests", requestRoutes);

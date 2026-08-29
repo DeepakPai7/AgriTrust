@@ -1,6 +1,6 @@
 # AgriTrust
 
-# DealCheck — Common APIs
+# agritrust — Common APIs
 
 ## 🔐 Authentication
 

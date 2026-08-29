@@ -2,11 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../main.dart';
+import '../models/models.dart';
+import '../services/api_scope.dart';
 import '../widgets/app_bars.dart';
 import 'add_sell_record_screen.dart';
 import 'buyer_requests_screen.dart';
 import 'deals_screen.dart';
 import 'market_prices_screen.dart';
+import 'my_products_screen.dart';
+import '../services/session.dart';
 
 class FarmerDashboardScreen extends StatelessWidget {
   const FarmerDashboardScreen({super.key});
@@ -17,7 +21,7 @@ class FarmerDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       // Shared top app bar (logo + language switcher).
-      appBar: const AppTopBar(),
+      appBar: const AppTopBar(showBack: false),
       // Shared bottom navigation bar (Home active).
       bottomNavigationBar: const AppBottomNav(activeIndex: 0),
       body: SafeArea(
@@ -103,7 +107,7 @@ class _WelcomeText extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Hello, Ramesh!',
+          'Hello, ${AppSession.currentUser?.name ?? 'Farmer'}!',
           style: GoogleFonts.inter(
             fontSize: 32,
             height: 40 / 32,
@@ -202,6 +206,11 @@ class _StatsGrid extends StatelessWidget {
         label: 'Products Listed',
         value: '3',
         valueColor: AppColors.onSurface,
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const MyProductsScreen()),
+          );
+        },
       ),
       _StatCard(
         icon: Icons.account_balance_wallet,
@@ -260,6 +269,7 @@ class _StatCard extends StatelessWidget {
     required this.value,
     required this.valueColor,
     this.emphasized = false,
+    this.onTap,
   });
 
   final IconData icon;
@@ -269,33 +279,40 @@ class _StatCard extends StatelessWidget {
   final String value;
   final Color valueColor;
   final bool emphasized;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceContainerLowest,
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(12),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0D059669),
-            blurRadius: 4,
-            offset: Offset(0, 2),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceContainerLowest,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x0D059669),
+                blurRadius: 4,
+                offset: Offset(0, 2),
+              ),
+            ],
+            gradient: emphasized
+                ? const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0x1A00855D), Colors.transparent],
+                  )
+                : null,
+            border: emphasized
+                ? Border.all(color: const Color(0x3300855D))
+                : null,
           ),
-        ],
-        gradient: emphasized
-            ? const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0x1A00855D), Colors.transparent],
-              )
-            : null,
-        border: emphasized
-            ? Border.all(color: const Color(0x3300855D))
-            : null,
-      ),
-      child: Column(
+          child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -329,6 +346,8 @@ class _StatCard extends StatelessWidget {
             ),
           ),
         ],
+        ),
+      ),
       ),
     );
   }
@@ -393,34 +412,83 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
-class _RequestsSection extends StatelessWidget {
+class _RequestsSection extends StatefulWidget {
   const _RequestsSection();
 
   @override
-  Widget build(BuildContext context) {
-    const requests = [
-      _Request(
-        initial: 'S',
-        name: 'Sharma Traders',
-        crop: 'Premium Wheat',
-        cropQty: '50 Quintals',
-        price: '₹2,400/Qtl',
-        badge: 'Pending Review',
-        badgeColor: AppColors.secondary,
-        badgeBg: Color(0x80FFDBCC),
-      ),
-      _Request(
-        initial: 'A',
-        name: 'AgriCorp Inc.',
-        crop: 'Soyabean',
-        cropQty: '20 Quintals',
-        price: '₹4,800/Qtl',
-        badge: 'New Offer',
-        badgeColor: AppColors.onPrimaryFixed,
-        badgeBg: Color(0x8085F8C4),
-      ),
-    ];
+  State<_RequestsSection> createState() => _RequestsSectionState();
+}
 
+class _RequestsSectionState extends State<_RequestsSection> {
+  static const int _maxShown = 2;
+  List<_Request> _requests = const [];
+  bool _loading = true;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final farmerId = AppSession.currentUser?.id;
+      final fetched = await ApiScope.of(context).fetchRequests(farmerId: farmerId);
+      if (mounted) {
+        setState(() {
+          _requests = fetched.take(_maxShown).map(_toTile).toList();
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e;
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  _Request _toTile(BuyerRequest r) {
+    final name = r.buyerName;
+    final initial = name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
+    final (badge, badgeColor, badgeBg) = switch (r.status) {
+      'accepted' => (
+          'Accepted',
+          AppColors.primaryContainer,
+          AppColors.primaryFixed,
+        ),
+      'rejected' => (
+          'Rejected',
+          AppColors.onErrorContainer,
+          AppColors.errorContainer,
+        ),
+      _ => (
+          'Pending Review',
+          AppColors.secondary,
+          const Color(0x80FFDBCC),
+        ),
+    };
+    return _Request(
+      initial: initial,
+      name: name,
+      crop: r.productName,
+      cropQty: '${_num(r.quantity)} ${r.unit}',
+      price: '₹${_num(r.offeredPrice)}/${r.unit}',
+      badge: badge,
+      badgeColor: badgeColor,
+      badgeBg: badgeBg,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -444,15 +512,49 @@ class _RequestsSection extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (var i = 0; i < requests.length; i++) ...[
-                  if (i > 0)
-                    const Divider(
-                      height: 1,
-                      thickness: 1,
-                      color: Color(0x4DBCCAC0),
+                if (_loading)
+                  const Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Center(
+                      child: CircularProgressIndicator(
+                        color: AppColors.primary,
+                      ),
                     ),
-                  _RequestTile(request: requests[i]),
-                ],
+                  )
+                else if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      'Could not load requests.',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        color: AppColors.onSurfaceVariant,
+                      ),
+                    ),
+                  )
+                else if (_requests.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      'No buyer requests yet.',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        color: AppColors.onSurfaceVariant,
+                      ),
+                    ),
+                  )
+                else
+                  for (var i = 0; i < _requests.length; i++) ...[
+                    if (i > 0)
+                      const Divider(
+                        height: 1,
+                        thickness: 1,
+                        color: Color(0x4DBCCAC0),
+                      ),
+                    _RequestTile(request: _requests[i]),
+                  ],
                 Container(
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   decoration: const BoxDecoration(
@@ -460,9 +562,11 @@ class _RequestsSection extends StatelessWidget {
                   ),
                   child: TextButton(
                     onPressed: () {
+                      final farmerId = AppSession.currentUser?.id;
                       Navigator.of(context).push(
                         MaterialPageRoute<void>(
-                          builder: (_) => const BuyerRequestsScreen(),
+                          builder: (_) =>
+                              BuyerRequestsScreen(farmerId: farmerId),
                         ),
                       );
                     },
@@ -684,7 +788,7 @@ class _QuickActionsSection extends StatelessWidget {
         dashed: false,
         fullWidth: false,
         onTap: () {
-          Navigator.of(context).push(
+          Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const MarketPricesScreen()),
           );
         },
@@ -696,7 +800,7 @@ class _QuickActionsSection extends StatelessWidget {
         dashed: false,
         fullWidth: false,
         onTap: () {
-          Navigator.of(context).push(
+          Navigator.of(context).pushReplacement(
             MaterialPageRoute(builder: (_) => const DealsScreen()),
           );
         },
@@ -799,4 +903,11 @@ class _QuickAction extends StatelessWidget {
       ),
     );
   }
+}
+
+String _num(num value) {
+  if (value == value.roundToDouble()) {
+    return value.toStringAsFixed(0);
+  }
+  return value.toString();
 }
